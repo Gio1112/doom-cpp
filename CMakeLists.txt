@@ -24,7 +24,7 @@ else()
   target_compile_options(doom_cpp_options INTERFACE -Wall -Wextra -Wpedantic -Werror)
 endif()
 
-add_library(doom_cpp_game engine/input.cpp engine/render.cpp game/map.cpp game/sprites.cpp game/wad.cpp)
+add_library(doom_cpp_game engine/input.cpp engine/render.cpp game/gameplay.cpp game/map.cpp game/sprites.cpp game/wad.cpp)
 target_include_directories(doom_cpp_game PUBLIC include)
 target_link_libraries(doom_cpp_game PUBLIC doom_cpp_options)
 
@@ -43,6 +43,7 @@ if(BUILD_TESTING)
   target_compile_definitions(bootstrap_tests
                              PRIVATE DOOMCPP_BINARY_PATH="$<TARGET_FILE:doom_cpp>")
   add_test(NAME bootstrap_runs COMMAND bootstrap_tests)
+  set_tests_properties(bootstrap_runs PROPERTIES ENVIRONMENT "DOOMCPP_SMOKE_TEST=1")
 
   add_executable(wad_tests tests/wad_test.cpp)
   target_link_libraries(wad_tests PRIVATE doom_cpp_game doom_cpp_options)
@@ -79,4 +80,10 @@ if(BUILD_TESTING)
   target_compile_definitions(
     sprite_tests PRIVATE DOOMCPP_FREEDOOM1_WAD="${CMAKE_SOURCE_DIR}/assets/freedoom1.wad")
   add_test(NAME sprites_load_and_render COMMAND sprite_tests)
+
+  add_executable(gameplay_tests tests/gameplay_test.cpp)
+  target_link_libraries(gameplay_tests PRIVATE doom_cpp_game doom_cpp_options)
+  target_compile_definitions(
+    gameplay_tests PRIVATE DOOMCPP_FREEDOOM1_WAD="${CMAKE_SOURCE_DIR}/assets/freedoom1.wad")
+  add_test(NAME gameplay_shooting_collision COMMAND gameplay_tests)
 endif()

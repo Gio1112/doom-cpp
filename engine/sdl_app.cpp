@@ -1,5 +1,6 @@
 #include "doomcpp/app.hpp"
 
+#include "doomcpp/gameplay.hpp"
 #include "doomcpp/input.hpp"
 #include "doomcpp/map.hpp"
 #include "doomcpp/render.hpp"
@@ -28,6 +29,11 @@ constexpr std::chrono::milliseconds smoke_loop_duration{3000};
 constexpr MovementConfig default_movement_config{
     .move_units_per_second = 128.0F,
     .mouse_degrees_per_count = 0.12F,
+};
+
+struct EventResult {
+    bool running;
+    bool fire_requested;
 };
 
 class SdlRuntime {
@@ -120,6 +126,10 @@ class SdlWindow {
     };
 }
 
+[[nodiscard]] bool smoke_test_requested() noexcept {
+    return SDL_getenv("DOOMCPP_SMOKE_TEST") != nullptr;
+}
+
 [[nodiscard]] std::filesystem::path resolve_wad_path(const std::filesystem::path& requested_path) {
     if (std::filesystem::exists(requested_path)) {
         return requested_path;
@@ -135,17 +145,21 @@ class SdlWindow {
     return requested_path;
 }
 
-void poll_events(InputState& input, bool& running) {
+[[nodiscard]] EventResult poll_events(InputState& input, const EventResult previous) {
+    EventResult result = previous;
     SDL_Event event;
     while (SDL_PollEvent(&event) != 0) {
         const bool requested_quit = event.type == SDL_QUIT || (event.type == SDL_KEYDOWN &&
                                                                event.key.keysym.sym == SDLK_ESCAPE);
         if (requested_quit) {
-            running = false;
+            result.running = false;
         } else if (event.type == SDL_MOUSEMOTION) {
             input.mouse_delta_x += static_cast<float>(event.motion.xrel);
+        } else if (event.type == SDL_MOUSEBUTTONDOWN && event.button.button == SDL_BUTTON_LEFT) {
+            result.fire_requested = true;
         }
     }
+    return result;
 }
 
 [[nodiscard]] bool key_is_down(const std::span<const Uint8> keys, const SDL_Scancode scancode) {
@@ -174,9 +188,11 @@ void sample_keyboard(InputState& input) {
     }
 }
 
-void step_fixed_ticks(PlayerState& player, InputState& input, float& accumulator_seconds) {
+void step_fixed_ticks(const MapData& map, PlayerState& player, InputState& input,
+                      float& accumulator_seconds) {
     while (accumulator_seconds >= fixed_tick_seconds) {
-        player = advance_player(player, input, default_movement_config);
+        const PlayerState proposed = advance_player(player, input, default_movement_config);
+        player = collide_player_move(map, player, proposed, 16.0F);
         input.mouse_delta_x = 0.0F;
         accumulator_seconds -= fixed_tick_seconds;
     }
@@ -189,6 +205,7 @@ int run_game(const std::filesystem::path& wad_path) {
     const MapData map = load_map(wad, "E1M1");
     const SpriteCatalog sprite_catalog = load_sprite_catalog(wad);
     const std::vector<ThingSprite> sprites = build_thing_sprites(map, sprite_catalog);
+    std::vector<EnemyState> enemies = build_enemies(map);
     PlayerState player = player_one_start_state(map);
 
     const SdlRuntime sdl;
@@ -198,6 +215,7 @@ int run_game(const std::filesystem::path& wad_path) {
     }
 
     const auto start_time = std::chrono::steady_clock::now();
+    const bool bounded_smoke_loop = smoke_test_requested();
     auto previous_time = start_time;
     float accumulator_seconds = 0.0F;
     InputState input{
@@ -205,22 +223,30 @@ int run_game(const std::filesystem::path& wad_path) {
         .strafe_axis = 0.0F,
         .mouse_delta_x = 0.0F,
     };
-    bool running = true;
-    while (running) {
+    EventResult events{
+        .running = true,
+        .fire_requested = false,
+    };
+    while (events.running) {
         input.mouse_delta_x = 0.0F;
-        poll_events(input, running);
+        events.fire_requested = false;
+        events = poll_events(input, events);
         sample_keyboard(input);
 
         const auto current_time = std::chrono::steady_clock::now();
         accumulator_seconds += std::chrono::duration<float>(current_time - previous_time).count();
         previous_time = current_time;
-        step_fixed_ticks(player, input, accumulator_seconds);
+        step_fixed_ticks(map, player, input, accumulator_seconds);
+        if (events.fire_requested) {
+            (void)fire_hitscan(enemies, to_player_view(player));
+        }
 
         const SoftwareFrame frame =
             render_map_frame(map, to_player_view(player), default_render_config, sprites);
         window.present(frame);
-        if (std::chrono::steady_clock::now() - start_time >= smoke_loop_duration) {
-            running = false;
+        if (bounded_smoke_loop &&
+            std::chrono::steady_clock::now() - start_time >= smoke_loop_duration) {
+            events.running = false;
         }
         SDL_Delay(16);
     }
