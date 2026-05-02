@@ -1,5 +1,6 @@
 #include "doomcpp/app.hpp"
 
+#include "doomcpp/input.hpp"
 #include "doomcpp/map.hpp"
 #include "doomcpp/render.hpp"
 #include "doomcpp/wad.hpp"
@@ -10,6 +11,7 @@
 #include <chrono>
 #include <cstdint>
 #include <filesystem>
+#include <span>
 #include <stdexcept>
 #include <string>
 
@@ -22,6 +24,10 @@ constexpr RenderConfig default_render_config{
     .horizontal_fov_degrees = 90.0F,
 };
 constexpr std::chrono::milliseconds smoke_loop_duration{3000};
+constexpr MovementConfig default_movement_config{
+    .move_units_per_second = 128.0F,
+    .mouse_degrees_per_count = 0.12F,
+};
 
 class SdlRuntime {
   public:
@@ -99,14 +105,14 @@ class SdlWindow {
     SDL_Texture* texture_{nullptr};
 };
 
-[[nodiscard]] PlayerView player_one_start_view(const MapData& map) {
+[[nodiscard]] PlayerState player_one_start_state(const MapData& map) {
     const auto start =
         std::ranges::find_if(map.things, [](const Thing& thing) { return thing.type == 1; });
     if (start == map.things.end()) {
         throw std::runtime_error{"E1M1 has no player 1 start"};
     }
 
-    return PlayerView{
+    return PlayerState{
         .x = static_cast<float>(start->x),
         .y = static_cast<float>(start->y),
         .angle_degrees = static_cast<float>(start->angle),
@@ -128,27 +134,87 @@ class SdlWindow {
     return requested_path;
 }
 
+void poll_events(InputState& input, bool& running) {
+    SDL_Event event;
+    while (SDL_PollEvent(&event) != 0) {
+        const bool requested_quit = event.type == SDL_QUIT || (event.type == SDL_KEYDOWN &&
+                                                               event.key.keysym.sym == SDLK_ESCAPE);
+        if (requested_quit) {
+            running = false;
+        } else if (event.type == SDL_MOUSEMOTION) {
+            input.mouse_delta_x += static_cast<float>(event.motion.xrel);
+        }
+    }
+}
+
+[[nodiscard]] bool key_is_down(const std::span<const Uint8> keys, const SDL_Scancode scancode) {
+    const auto index = static_cast<std::size_t>(scancode);
+    return index < keys.size() && keys[index] != 0U;
+}
+
+void sample_keyboard(InputState& input) {
+    int key_count = 0;
+    const Uint8* keyboard = SDL_GetKeyboardState(&key_count);
+    const std::span<const Uint8> keys{keyboard, static_cast<std::size_t>(key_count)};
+
+    input.forward_axis = 0.0F;
+    input.strafe_axis = 0.0F;
+    if (key_is_down(keys, SDL_SCANCODE_W)) {
+        input.forward_axis += 1.0F;
+    }
+    if (key_is_down(keys, SDL_SCANCODE_S)) {
+        input.forward_axis -= 1.0F;
+    }
+    if (key_is_down(keys, SDL_SCANCODE_D)) {
+        input.strafe_axis += 1.0F;
+    }
+    if (key_is_down(keys, SDL_SCANCODE_A)) {
+        input.strafe_axis -= 1.0F;
+    }
+}
+
+void step_fixed_ticks(PlayerState& player, InputState& input, float& accumulator_seconds) {
+    while (accumulator_seconds >= fixed_tick_seconds) {
+        player = advance_player(player, input, default_movement_config);
+        input.mouse_delta_x = 0.0F;
+        accumulator_seconds -= fixed_tick_seconds;
+    }
+}
+
 } // namespace
 
 int run_game(const std::filesystem::path& wad_path) {
     const WadFile wad = WadFile::load_from_file(resolve_wad_path(wad_path));
     const MapData map = load_map(wad, "E1M1");
-    const PlayerView view = player_one_start_view(map);
-    const SoftwareFrame frame = render_map_frame(map, view, default_render_config);
+    PlayerState player = player_one_start_state(map);
 
     const SdlRuntime sdl;
     SdlWindow window{default_render_config};
+    if (SDL_SetRelativeMouseMode(SDL_TRUE) != 0) {
+        throw std::runtime_error{"SDL_SetRelativeMouseMode failed: " + std::string{SDL_GetError()}};
+    }
 
     const auto start_time = std::chrono::steady_clock::now();
+    auto previous_time = start_time;
+    float accumulator_seconds = 0.0F;
+    InputState input{
+        .forward_axis = 0.0F,
+        .strafe_axis = 0.0F,
+        .mouse_delta_x = 0.0F,
+    };
     bool running = true;
     while (running) {
-        SDL_Event event;
-        while (SDL_PollEvent(&event) != 0) {
-            if (event.type == SDL_QUIT || event.type == SDL_KEYDOWN) {
-                running = false;
-            }
-        }
+        input.mouse_delta_x = 0.0F;
+        poll_events(input, running);
+        sample_keyboard(input);
 
+        const auto current_time = std::chrono::steady_clock::now();
+        accumulator_seconds += std::chrono::duration<float>(current_time - previous_time).count();
+        previous_time = current_time;
+        step_fixed_ticks(player, input, accumulator_seconds);
+
+        const SoftwareFrame frame =
+            render_map_frame(map, to_player_view(player), default_render_config);
         window.present(frame);
         if (std::chrono::steady_clock::now() - start_time >= smoke_loop_duration) {
             running = false;
