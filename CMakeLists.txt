@@ -13,6 +13,8 @@ set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 
 include(CTest)
 
+find_package(SDL2 REQUIRED)
+
 add_library(doom_cpp_options INTERFACE)
 target_compile_features(doom_cpp_options INTERFACE cxx_std_20)
 
@@ -22,13 +24,17 @@ else()
   target_compile_options(doom_cpp_options INTERFACE -Wall -Wextra -Wpedantic -Werror)
 endif()
 
-add_library(doom_cpp_game game/map.cpp game/wad.cpp)
+add_library(doom_cpp_game engine/render.cpp game/map.cpp game/wad.cpp)
 target_include_directories(doom_cpp_game PUBLIC include)
 target_link_libraries(doom_cpp_game PUBLIC doom_cpp_options)
 
+add_library(doom_cpp_platform engine/sdl_app.cpp)
+target_include_directories(doom_cpp_platform PUBLIC include)
+target_link_libraries(doom_cpp_platform PUBLIC doom_cpp_game doom_cpp_options SDL2::SDL2)
+
 add_executable(doom_cpp engine/main.cpp)
 target_include_directories(doom_cpp PRIVATE include)
-target_link_libraries(doom_cpp PRIVATE doom_cpp_game doom_cpp_options)
+target_link_libraries(doom_cpp PRIVATE doom_cpp_platform doom_cpp_options)
 
 if(BUILD_TESTING)
   add_executable(bootstrap_tests tests/bootstrap_test.cpp)
@@ -57,4 +63,10 @@ if(BUILD_TESTING)
   target_compile_definitions(
     bsp_tests PRIVATE DOOMCPP_FREEDOOM1_WAD="${CMAKE_SOURCE_DIR}/assets/freedoom1.wad")
   add_test(NAME bsp_player_start_subsector COMMAND bsp_tests)
+
+  add_executable(renderer_tests tests/renderer_test.cpp)
+  target_link_libraries(renderer_tests PRIVATE doom_cpp_game doom_cpp_options)
+  target_compile_definitions(
+    renderer_tests PRIVATE DOOMCPP_FREEDOOM1_WAD="${CMAKE_SOURCE_DIR}/assets/freedoom1.wad")
+  add_test(NAME renderer_frame_nonblank COMMAND renderer_tests)
 endif()

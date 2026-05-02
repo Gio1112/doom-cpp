@@ -1,8 +1,13 @@
-#include "doomcpp/config.hpp"
+#include "doomcpp/app.hpp"
 
 #include <iostream>
+#include <stdexcept>
 
 int main() {
-    std::cout << doomcpp::boot_message << '\n';
-    return 0;
+    try {
+        return doomcpp::run_game("assets/freedoom1.wad");
+    } catch (const std::exception& exception) {
+        std::cerr << "doom-cpp failed: " << exception.what() << '\n';
+        return 1;
+    }
 }
