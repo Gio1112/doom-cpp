@@ -1,6 +1,7 @@
 #pragma once
 
 #include "doomcpp/map.hpp"
+#include "doomcpp/sprites.hpp"
 
 #include <cstdint>
 #include <span>
@@ -74,6 +75,7 @@ class SoftwareFrame {
 /// Postconditions: returns an owning framebuffer containing ceiling, floor, and projected walls.
 /// Ownership: borrows `map`; owns the returned frame pixels.
 [[nodiscard]] SoftwareFrame render_map_frame(const MapData& map, PlayerView view,
-                                             RenderConfig config);
+                                             RenderConfig config,
+                                             std::span<const ThingSprite> sprites = {});
 
 } // namespace doomcpp

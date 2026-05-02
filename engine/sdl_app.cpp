@@ -3,6 +3,7 @@
 #include "doomcpp/input.hpp"
 #include "doomcpp/map.hpp"
 #include "doomcpp/render.hpp"
+#include "doomcpp/sprites.hpp"
 #include "doomcpp/wad.hpp"
 
 #include <SDL.h>
@@ -186,6 +187,8 @@ void step_fixed_ticks(PlayerState& player, InputState& input, float& accumulator
 int run_game(const std::filesystem::path& wad_path) {
     const WadFile wad = WadFile::load_from_file(resolve_wad_path(wad_path));
     const MapData map = load_map(wad, "E1M1");
+    const SpriteCatalog sprite_catalog = load_sprite_catalog(wad);
+    const std::vector<ThingSprite> sprites = build_thing_sprites(map, sprite_catalog);
     PlayerState player = player_one_start_state(map);
 
     const SdlRuntime sdl;
@@ -214,7 +217,7 @@ int run_game(const std::filesystem::path& wad_path) {
         step_fixed_ticks(player, input, accumulator_seconds);
 
         const SoftwareFrame frame =
-            render_map_frame(map, to_player_view(player), default_render_config);
+            render_map_frame(map, to_player_view(player), default_render_config, sprites);
         window.present(frame);
         if (std::chrono::steady_clock::now() - start_time >= smoke_loop_duration) {
             running = false;

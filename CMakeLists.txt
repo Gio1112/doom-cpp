@@ -24,7 +24,7 @@ else()
   target_compile_options(doom_cpp_options INTERFACE -Wall -Wextra -Wpedantic -Werror)
 endif()
 
-add_library(doom_cpp_game engine/input.cpp engine/render.cpp game/map.cpp game/wad.cpp)
+add_library(doom_cpp_game engine/input.cpp engine/render.cpp game/map.cpp game/sprites.cpp game/wad.cpp)
 target_include_directories(doom_cpp_game PUBLIC include)
 target_link_libraries(doom_cpp_game PUBLIC doom_cpp_options)
 
@@ -73,4 +73,10 @@ if(BUILD_TESTING)
   add_executable(input_tests tests/input_test.cpp)
   target_link_libraries(input_tests PRIVATE doom_cpp_game doom_cpp_options)
   add_test(NAME input_fixed_tick COMMAND input_tests)
+
+  add_executable(sprite_tests tests/sprite_test.cpp)
+  target_link_libraries(sprite_tests PRIVATE doom_cpp_game doom_cpp_options)
+  target_compile_definitions(
+    sprite_tests PRIVATE DOOMCPP_FREEDOOM1_WAD="${CMAKE_SOURCE_DIR}/assets/freedoom1.wad")
+  add_test(NAME sprites_load_and_render COMMAND sprite_tests)
 endif()

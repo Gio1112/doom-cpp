@@ -1,5 +1,6 @@
 #include "doomcpp/map.hpp"
 #include "doomcpp/render.hpp"
+#include "doomcpp/sprites.hpp"
 #include "doomcpp/wad.hpp"
 
 #include <algorithm>
@@ -55,8 +56,11 @@ int main() {
     try {
         const doomcpp::WadFile wad = doomcpp::WadFile::load_from_file(DOOMCPP_FREEDOOM1_WAD);
         const doomcpp::MapData map = doomcpp::load_map(wad, "E1M1");
+        const doomcpp::SpriteCatalog sprite_catalog = doomcpp::load_sprite_catalog(wad);
+        const std::vector<doomcpp::ThingSprite> sprites =
+            doomcpp::build_thing_sprites(map, sprite_catalog);
         const doomcpp::SoftwareFrame frame =
-            doomcpp::render_map_frame(map, player_one_start_view(map), test_render_config);
+            doomcpp::render_map_frame(map, player_one_start_view(map), test_render_config, sprites);
 
         const auto pixels = frame.pixels();
         const bool has_ceiling = std::ranges::find(pixels, doomcpp::ceiling_color) != pixels.end();
@@ -65,9 +69,14 @@ int main() {
             return color != doomcpp::ceiling_color && color != doomcpp::floor_color &&
                    color >= doomcpp::minimum_wall_color;
         });
+        const bool has_sprite = std::ranges::any_of(pixels, [](const std::uint32_t color) {
+            return color == doomcpp::sprite_pixel_color || color == 0xFFC04040U ||
+                   color == 0xFFD8C078U;
+        });
 
-        if (!has_ceiling || !has_floor || !has_wall) {
-            std::cerr << "expected rendered frame to contain ceiling, floor, and wall pixels\n";
+        if (!has_ceiling || !has_floor || !has_wall || !has_sprite) {
+            std::cerr
+                << "expected rendered frame to contain ceiling, floor, wall, and sprite pixels\n";
             return 1;
         }
 

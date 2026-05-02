@@ -5,6 +5,7 @@
 #include <numbers>
 #include <stdexcept>
 #include <utility>
+#include <vector>
 
 namespace doomcpp {
 namespace {
@@ -29,6 +30,12 @@ struct WallDrawStyle {
     std::uint32_t color;
 };
 
+struct ProjectedSprite {
+    float depth;
+    float lateral;
+    const ThingSprite* sprite;
+};
+
 [[nodiscard]] std::uint32_t wall_color_for_linedef(const std::size_t index) noexcept {
     const auto shade = static_cast<std::uint32_t>(112U + ((index * 37U) % 96U));
     return 0xFF000000U | (shade << 16U) | (shade << 8U) | shade;
@@ -40,6 +47,19 @@ struct WallDrawStyle {
     const float sin_angle = std::sin(angle);
     const float translated_x = static_cast<float>(vertex.x) - view.x;
     const float translated_y = static_cast<float>(vertex.y) - view.y;
+
+    return CameraPoint{
+        .x = (translated_x * cos_angle) + (translated_y * sin_angle),
+        .y = (-translated_x * sin_angle) + (translated_y * cos_angle),
+    };
+}
+
+[[nodiscard]] CameraPoint transform_to_camera(const ThingSprite& sprite, const PlayerView view) {
+    const float angle = view.angle_degrees * degrees_to_radians;
+    const float cos_angle = std::cos(angle);
+    const float sin_angle = std::sin(angle);
+    const float translated_x = sprite.x - view.x;
+    const float translated_y = sprite.y - view.y;
 
     return CameraPoint{
         .x = (translated_x * cos_angle) + (translated_y * sin_angle),
@@ -125,6 +145,36 @@ void draw_wall_segment(SoftwareFrame& frame, const CameraPoint first, const Came
     }
 }
 
+void draw_sprite(SoftwareFrame& frame, const ProjectedSprite projected, const RenderConfig config,
+                 const float focal_length) {
+    if (projected.depth < near_plane || projected.sprite == nullptr) {
+        return;
+    }
+
+    const float center_x = (static_cast<float>(config.width) * 0.5F) +
+                           ((projected.lateral / projected.depth) * focal_length);
+    const float projected_height =
+        (static_cast<float>(projected.sprite->height) / projected.depth) * focal_length;
+    const float projected_width =
+        (static_cast<float>(projected.sprite->width) / projected.depth) * focal_length;
+
+    const auto left = static_cast<std::int32_t>(std::floor(center_x - (projected_width * 0.5F)));
+    const auto right = static_cast<std::int32_t>(std::ceil(center_x + (projected_width * 0.5F)));
+    const auto bottom = static_cast<std::int32_t>(config.height / 2U);
+    const auto top =
+        static_cast<std::int32_t>(std::floor(static_cast<float>(bottom) - projected_height));
+
+    for (std::int32_t screen_x = left; screen_x <= right; ++screen_x) {
+        draw_column(frame,
+                    ColumnSpan{
+                        .screen_x = screen_x,
+                        .top = top,
+                        .bottom = bottom,
+                    },
+                    projected.sprite->color);
+    }
+}
+
 } // namespace
 
 SoftwareFrame::SoftwareFrame(const std::uint16_t width, const std::uint16_t height)
@@ -150,8 +200,8 @@ std::span<const std::uint32_t> SoftwareFrame::pixels() const noexcept {
     return pixels_;
 }
 
-SoftwareFrame render_map_frame(const MapData& map, const PlayerView view,
-                               const RenderConfig config) {
+SoftwareFrame render_map_frame(const MapData& map, const PlayerView view, const RenderConfig config,
+                               const std::span<const ThingSprite> sprites) {
     if (config.width == 0U || config.height == 0U || config.horizontal_fov_degrees <= 0.0F) {
         throw std::runtime_error{"invalid render configuration"};
     }
@@ -187,6 +237,23 @@ SoftwareFrame render_map_frame(const MapData& map, const PlayerView view,
                               .focal_length = focal_length,
                               .color = wall_color_for_linedef(index),
                           });
+    }
+
+    std::vector<ProjectedSprite> projected_sprites;
+    projected_sprites.reserve(sprites.size());
+    for (const ThingSprite& sprite : sprites) {
+        const CameraPoint camera = transform_to_camera(sprite, view);
+        if (camera.x >= near_plane) {
+            projected_sprites.push_back(ProjectedSprite{
+                .depth = camera.x,
+                .lateral = camera.y,
+                .sprite = std::addressof(sprite),
+            });
+        }
+    }
+    std::ranges::sort(projected_sprites, std::greater<>{}, &ProjectedSprite::depth);
+    for (const ProjectedSprite& sprite : projected_sprites) {
+        draw_sprite(frame, sprite, config, focal_length);
     }
 
     return frame;
