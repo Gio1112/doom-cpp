@@ -13,7 +13,12 @@ constexpr std::size_t vertex_record_size = 4;
 constexpr std::size_t linedef_record_size = 14;
 constexpr std::size_t sidedef_record_size = 30;
 constexpr std::size_t sector_record_size = 26;
+constexpr std::size_t seg_record_size = 12;
+constexpr std::size_t subsector_record_size = 4;
+constexpr std::size_t node_record_size = 28;
 constexpr std::size_t texture_name_size = 8;
+constexpr std::uint16_t subsector_child_flag = 0x8000U;
+constexpr std::uint16_t child_index_mask = 0x7FFFU;
 
 [[nodiscard]] char uppercase_ascii(const char value) noexcept {
     if (value >= 'a' && value <= 'z') {
@@ -217,6 +222,88 @@ void require_record_multiple(const Lump& lump, const std::size_t record_size) {
     return sectors;
 }
 
+[[nodiscard]] std::vector<Seg> parse_segs(const WadFile& wad, const Lump& lump) {
+    require_record_multiple(lump, seg_record_size);
+    const std::span<const std::byte> bytes = wad.lump_data(lump);
+    std::vector<Seg> segs;
+    segs.reserve(bytes.size() / seg_record_size);
+
+    for (std::size_t offset = 0; offset < bytes.size(); offset += seg_record_size) {
+        segs.push_back(Seg{
+            .start_vertex = read_u16_le(bytes, offset),
+            .end_vertex = read_u16_le(bytes, offset + 2U),
+            .angle = read_i16_le(bytes, offset + 4U),
+            .linedef = read_u16_le(bytes, offset + 6U),
+            .direction = read_i16_le(bytes, offset + 8U),
+            .offset = read_i16_le(bytes, offset + 10U),
+        });
+    }
+
+    return segs;
+}
+
+[[nodiscard]] std::vector<Subsector> parse_subsectors(const WadFile& wad, const Lump& lump) {
+    require_record_multiple(lump, subsector_record_size);
+    const std::span<const std::byte> bytes = wad.lump_data(lump);
+    std::vector<Subsector> subsectors;
+    subsectors.reserve(bytes.size() / subsector_record_size);
+
+    for (std::size_t offset = 0; offset < bytes.size(); offset += subsector_record_size) {
+        subsectors.push_back(Subsector{
+            .seg_count = read_u16_le(bytes, offset),
+            .first_seg = read_u16_le(bytes, offset + 2U),
+        });
+    }
+
+    return subsectors;
+}
+
+[[nodiscard]] BoundingBox parse_bounding_box(const std::span<const std::byte> bytes,
+                                             const std::size_t offset) {
+    return BoundingBox{
+        .top = read_i16_le(bytes, offset),
+        .bottom = read_i16_le(bytes, offset + 2U),
+        .left = read_i16_le(bytes, offset + 4U),
+        .right = read_i16_le(bytes, offset + 6U),
+    };
+}
+
+[[nodiscard]] std::vector<Node> parse_nodes(const WadFile& wad, const Lump& lump) {
+    require_record_multiple(lump, node_record_size);
+    const std::span<const std::byte> bytes = wad.lump_data(lump);
+    std::vector<Node> nodes;
+    nodes.reserve(bytes.size() / node_record_size);
+
+    for (std::size_t offset = 0; offset < bytes.size(); offset += node_record_size) {
+        nodes.push_back(Node{
+            .x = read_i16_le(bytes, offset),
+            .y = read_i16_le(bytes, offset + 2U),
+            .dx = read_i16_le(bytes, offset + 4U),
+            .dy = read_i16_le(bytes, offset + 6U),
+            .bounding_boxes =
+                {
+                    parse_bounding_box(bytes, offset + 8U),
+                    parse_bounding_box(bytes, offset + 16U),
+                },
+            .children =
+                {
+                    read_u16_le(bytes, offset + 24U),
+                    read_u16_le(bytes, offset + 26U),
+                },
+        });
+    }
+
+    return nodes;
+}
+
+[[nodiscard]] std::size_t child_side_for_point(const Node& node, const BspPoint point) {
+    const std::int64_t dx = static_cast<std::int64_t>(point.x) - node.x;
+    const std::int64_t dy = static_cast<std::int64_t>(point.y) - node.y;
+    const std::int64_t side =
+        (dx * static_cast<std::int64_t>(node.dy)) - (dy * static_cast<std::int64_t>(node.dx));
+    return side <= 0 ? 0U : 1U;
+}
+
 } // namespace
 
 MapData load_map(const WadFile& wad, const std::string_view map_name) {
@@ -228,7 +315,36 @@ MapData load_map(const WadFile& wad, const std::string_view map_name) {
         .sidedefs = parse_sidedefs(wad, required_lump(map_lumps, "SIDEDEFS")),
         .vertices = parse_vertices(wad, required_lump(map_lumps, "VERTEXES")),
         .sectors = parse_sectors(wad, required_lump(map_lumps, "SECTORS")),
+        .segs = parse_segs(wad, required_lump(map_lumps, "SEGS")),
+        .subsectors = parse_subsectors(wad, required_lump(map_lumps, "SSECTORS")),
+        .nodes = parse_nodes(wad, required_lump(map_lumps, "NODES")),
     };
+}
+
+std::optional<std::uint16_t> find_subsector_containing_point(const MapData& map,
+                                                             const BspPoint point) {
+    if (map.nodes.empty()) {
+        return std::nullopt;
+    }
+
+    auto node_index = static_cast<std::uint16_t>(map.nodes.size() - 1U);
+    for (;;) {
+        if (node_index >= map.nodes.size()) {
+            return std::nullopt;
+        }
+
+        const Node& node = map.nodes[node_index];
+        const std::uint16_t child = node.children.at(child_side_for_point(node, point));
+        if ((child & subsector_child_flag) != 0U) {
+            const auto subsector_index = static_cast<std::uint16_t>(child & child_index_mask);
+            if (subsector_index >= map.subsectors.size()) {
+                return std::nullopt;
+            }
+            return subsector_index;
+        }
+
+        node_index = child;
+    }
 }
 
 } // namespace doomcpp

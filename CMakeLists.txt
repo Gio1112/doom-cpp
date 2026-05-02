@@ -51,4 +51,10 @@ if(BUILD_TESTING)
     map_geometry_tests
     PRIVATE DOOMCPP_FREEDOOM1_WAD="${CMAKE_SOURCE_DIR}/assets/freedoom1.wad")
   add_test(NAME map_geometry_loads COMMAND map_geometry_tests)
+
+  add_executable(bsp_tests tests/bsp_test.cpp)
+  target_link_libraries(bsp_tests PRIVATE doom_cpp_game doom_cpp_options)
+  target_compile_definitions(
+    bsp_tests PRIVATE DOOMCPP_FREEDOOM1_WAD="${CMAKE_SOURCE_DIR}/assets/freedoom1.wad")
+  add_test(NAME bsp_player_start_subsector COMMAND bsp_tests)
 endif()
