@@ -22,7 +22,7 @@ else()
   target_compile_options(doom_cpp_options INTERFACE -Wall -Wextra -Wpedantic -Werror)
 endif()
 
-add_library(doom_cpp_game game/wad.cpp)
+add_library(doom_cpp_game game/map.cpp game/wad.cpp)
 target_include_directories(doom_cpp_game PUBLIC include)
 target_link_libraries(doom_cpp_game PUBLIC doom_cpp_options)
 
@@ -44,4 +44,11 @@ if(BUILD_TESTING)
     wad_tests PRIVATE
                       DOOMCPP_FREEDOOM1_WAD="${CMAKE_SOURCE_DIR}/assets/freedoom1.wad")
   add_test(NAME wad_directory_loads COMMAND wad_tests)
+
+  add_executable(map_geometry_tests tests/map_geometry_test.cpp)
+  target_link_libraries(map_geometry_tests PRIVATE doom_cpp_game doom_cpp_options)
+  target_compile_definitions(
+    map_geometry_tests
+    PRIVATE DOOMCPP_FREEDOOM1_WAD="${CMAKE_SOURCE_DIR}/assets/freedoom1.wad")
+  add_test(NAME map_geometry_loads COMMAND map_geometry_tests)
 endif()
